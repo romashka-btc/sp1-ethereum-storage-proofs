@@ -12,3 +12,4 @@ sha3 = "0.10.2"
 rlp = "0.5.2"
 anyhow = "1.0.79"
 serde = { version = "1.0.196", features = ["derive"] }
+ethers = "2.0.14"

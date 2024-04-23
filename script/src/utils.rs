@@ -1,7 +1,11 @@
-use rlp::Rlp;
+use rlp::{Encodable, Rlp, RlpStream};
 use std::process::Command;
 
-use crate::trie::{MAX_SP_NODE_LENGTH, StorageProof};
+use crate::{
+    header::EvmBlockHeader,
+    trie::{StorageProof, MAX_SP_NODE_LENGTH},
+};
+use ethers::{prelude::*, utils::keccak256};
 use serde_json::Value;
 use sha3::{Digest, Keccak256};
 
@@ -11,6 +15,104 @@ extern crate serde_json;
 pub enum Block {
     Latest,
     Number(u64),
+}
+fn encode_block_header(header: &EvmBlockHeader, source_url: String) -> Vec<u8> {
+    let mut stream = RlpStream::new();
+    header.rlp_append(&mut stream);
+    stream.out().to_vec()
+}
+
+pub fn get_block_enc_header(block_number: String) -> (Vec<u8>, String) {
+    let data_string = format!(
+        r#"{{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["{}", false],"id":1}}"#,
+        block_number
+    );
+
+    //TODO: Add the source url
+    let output = Command::new("curl")
+        .arg("-X")
+        .arg("POST")
+        .arg("https://eth-mainnet.g.alchemy.com/v2/4km9U2L-ODSqptpYnzDYu3mBWQ6yd7Ww")
+        .arg("-d")
+        .arg(data_string)
+        .output()
+        .expect("Failed to execute command");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_str(&stdout).unwrap();
+
+    let block_header = parsed["result"].clone();
+    println!("block_header: {:#?}", block_header);
+
+    let parent_hash = block_header["parentHash"].as_str().unwrap();
+    let parent_hash = &parent_hash[2..];
+    let state_root = block_header["stateRoot"].as_str().unwrap();
+    let state_root = &state_root[2..];
+    let transactions_root = block_header["transactionsRoot"].as_str().unwrap();
+    let transactions_root = &transactions_root[2..];
+    let receipts_root = block_header["receiptsRoot"].as_str().unwrap();
+    let receipts_root = &receipts_root[2..];
+    let logs_bloom = block_header["logsBloom"].as_str().unwrap();
+    let logs_bloom = &logs_bloom[2..];
+    let difficulty = block_header["difficulty"].as_str().unwrap();
+    let difficulty = &difficulty[2..];
+    let number = block_header["number"].as_str().unwrap();
+    let number = u64::from_str_radix(&number[2..], 16).unwrap();
+    let gas_limit = block_header["gasLimit"].as_str().unwrap();
+    let gas_limit = u64::from_str_radix(&gas_limit[2..], 16).unwrap();
+    let gas_used = block_header["gasUsed"].as_str().unwrap();
+    let gas_used = u64::from_str_radix(&gas_used[2..], 16).unwrap();
+    let timestamp = block_header["timestamp"].as_str().unwrap();
+    let timestamp = u64::from_str_radix(&timestamp[2..], 16).unwrap();
+    let extra_data = block_header["extraData"].as_str().unwrap();
+    let extra_data = &extra_data[2..];
+    let mix_hash = block_header["mixHash"].as_str().unwrap();
+    let mix_hash = &mix_hash[2..];
+    let nonce = block_header["nonce"].as_str().unwrap();
+    let nonce = &nonce[2..];
+    let miner = block_header["miner"].as_str().unwrap();
+    let miner = &miner[2..];
+    let base_fee_per_gas = block_header["baseFeePerGas"].as_str().unwrap();
+    let base_fee_per_gas = u64::from_str_radix(&base_fee_per_gas[2..], 16).unwrap();
+    let withdrawals_root = block_header["withdrawalsRoot"].as_str().unwrap();
+    let withdrawals_root = &withdrawals_root[2..];
+    let blob_gas_used = block_header["blobGasUsed"].as_str().unwrap();
+    let blob_gas_used = u64::from_str_radix(&blob_gas_used[2..], 16).unwrap();
+    let excess_blob_gas = block_header["excessBlobGas"].as_str().unwrap();
+    let excess_blob_gas = u64::from_str_radix(&excess_blob_gas[2..], 16).unwrap();
+    let parent_beacon_block_root = block_header["parentBeaconBlockRoot"].as_str().unwrap();
+    let parent_beacon_block_root = &parent_beacon_block_root[2..];
+    let sha3uncles = block_header["sha3Uncles"].as_str().unwrap();
+    let sha3uncles = &sha3uncles[2..];
+
+    let evm_block = EvmBlockHeader {
+        parent_hash: parent_hash.to_string(),
+        state_root: state_root.to_string(),
+        transactions_root: transactions_root.to_string(),
+        receipts_root: receipts_root.to_string(),
+        logs_bloom: logs_bloom.to_string(),
+        difficulty: difficulty.to_string().parse::<u64>().unwrap(),
+        number: number,
+        gas_limit: gas_limit,
+        gas_used: gas_used,
+        timestamp: timestamp.to_string().parse::<u64>().unwrap(),
+        extra_data: extra_data.to_string(),
+        mix_hash: mix_hash.to_string(),
+        nonce: nonce.to_string(),
+        coinbase: miner.to_string(),
+        base_fee_per_gas: Some(base_fee_per_gas),
+        withdrawals_root: Some(withdrawals_root.to_string()),
+        blob_gas_used: Some(blob_gas_used),
+        excess_blob_gas: Some(excess_blob_gas),
+        parent_beacon_block_root: Some(parent_beacon_block_root.to_string()),
+        uncle_hash: sha3uncles.to_string(),
+    };
+
+    let encoded_block_header = encode_block_header(&evm_block, "".to_string());
+    let blockhash = hex::encode(keccak256(&encoded_block_header.clone()));
+    let expected_block_hash = block_header["hash"].as_str().unwrap()[2..].to_string();
+    assert_eq!(blockhash, expected_block_hash);
+    (encoded_block_header, expected_block_hash)
 }
 
 pub fn get_storage_proof(
@@ -39,6 +141,7 @@ pub fn get_storage_proof(
         .output()
         .expect("Failed to execute command");
 
+    let (encoded_block_header, block_hash) = get_block_enc_header(bn.clone());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Value = serde_json::from_str(&stdout).unwrap();
 
@@ -109,18 +212,14 @@ pub fn get_storage_proof(
         })
         .collect::<Vec<Vec<u8>>>();
 
-    let node_lengths = calculate_node_lengths_sans_trailing_zeros(&proof_bytes);
-
-    let proof = path_as_str.iter().map(|x| x[2..].to_string()).collect::<Vec<String>>();
-    let account_proof = account_path_as_str.iter().map(|x| x[2..].to_string()).collect::<Vec<String>>();
-
-    println!("proof: {:?}", proof);
-    println!("node_lengths: {:?}", node_lengths);
-
-    let value_short = storage_proof["value"].as_str().unwrap();
-    let value_short = odd_to_even_hex(&value_short[2..]);
-
-    println!("value: {:?}", value_short);
+    let proof = path_as_str
+        .iter()
+        .map(|x| x[2..].to_string())
+        .collect::<Vec<String>>();
+    let account_proof = account_path_as_str
+        .iter()
+        .map(|x| x[2..].to_string())
+        .collect::<Vec<String>>();
 
     (
         StorageProof {
@@ -129,11 +228,12 @@ pub fn get_storage_proof(
             storage_key: key_hash.to_string(),
             storage_proof: proof,
             key_ptrs,
-            account_key_ptrs
+            account_key_ptrs,
+            enc_block_header: encoded_block_header,
+            block_hash,
         },
-        storage_hash.to_owned()
+        storage_hash.to_owned(),
     )
-
 }
 
 fn odd_to_even_hex(hex: &str) -> String {
@@ -191,9 +291,6 @@ fn split_key_at_branches(key: &str, path: &Vec<Vec<String>>) -> Vec<usize> {
     for (i, level) in path.iter().enumerate() {
         let mut current_slice = String::new();
 
-        // println!("level {}: {:?}", i, level.len());
-        // println!("key_index: {}", key_index);
-
         if level.len() > 2 {
             // Branch node
             current_slice.push_str(&key[key_index..key_index + 1]);
@@ -202,7 +299,7 @@ fn split_key_at_branches(key: &str, path: &Vec<Vec<String>>) -> Vec<usize> {
         } else if i != path.len() - 1 && level.len() == 2 {
             // Extension node
             let extension = &level[0][2..]; // Removing the "0x" prefix
-            // rlp decode the extension
+                                            // rlp decode the extension
             let bytes = hex::decode(extension).expect("Decoding failed");
             let decoded: String = rlp::decode(&bytes).expect("Decoding failed");
             current_slice.push_str(&decoded);
@@ -220,11 +317,13 @@ fn split_key_at_branches(key: &str, path: &Vec<Vec<String>>) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::{Block, get_storage_proof, rlp_decode_and_pretty_print, split_key_at_branches};
+    use crate::utils::{
+        get_storage_proof, rlp_decode_and_pretty_print, split_key_at_branches, Block,
+    };
     use anyhow::Result;
+    use hex;
     use rlp::Rlp;
     use sha3::{Digest, Keccak256};
-    use hex;
 
     #[test]
     fn test_branch_split() -> Result<()> {
@@ -254,78 +353,113 @@ mod tests {
     fn test_proof_verify() -> Result<()> {
         let eth_address = "0xb47e3cd837dDF8e4c57f05d70ab865de6e193bbb";
         let storage_key = "0xbbc70db1b6c7afd11e79c0fb0051300458f1a3acb8ee9789d9b6b26c61ad9bc7";
-        let block_number = Block::Latest;
 
-        let trie_proof = get_storage_proof(eth_address, storage_key, block_number);
-        let sp = trie_proof.0;
-        let mut current_hash = trie_proof.1.clone();
+        for i in 0..20 {
+            let block_number = Block::Number(19719703 - i);
 
-        let key_ptrs = sp.key_ptrs;
-        let account_key_ptrs = sp.account_key_ptrs;
+            let trie_proof = get_storage_proof(eth_address, storage_key, block_number);
+            let sp = trie_proof.0;
+            let mut current_hash = trie_proof.1.clone();
 
-        let depth_sp = sp.storage_proof.len();
-        let depth_ap = sp.account_proof.len();
+            let key_ptrs = sp.key_ptrs;
+            let account_key_ptrs = sp.account_key_ptrs;
 
-        let key_nibbles = sp.storage_key.chars().map(|x| x.to_digit(16).unwrap() as usize).collect::<Vec<_>>();
-        let account_key_nibbles = sp.address_hash.chars().map(|x| x.to_digit(16).unwrap() as usize).collect::<Vec<_>>();
+            let depth_sp = sp.storage_proof.len();
+            let depth_ap = sp.account_proof.len();
 
-        for (i, p) in sp.storage_proof.iter().enumerate() {
-            let bytes = hex::decode(&p).expect("Decoding proof failed");
+            let key_nibbles = sp
+                .storage_key
+                .chars()
+                .map(|x| x.to_digit(16).unwrap() as usize)
+                .collect::<Vec<_>>();
+            let account_key_nibbles = sp
+                .address_hash
+                .chars()
+                .map(|x| x.to_digit(16).unwrap() as usize)
+                .collect::<Vec<_>>();
 
-            let mut hasher = Keccak256::new();
-            hasher.update(&bytes);
-            let res = hasher.finalize();
+            for (i, p) in sp.storage_proof.iter().enumerate() {
+                let bytes = hex::decode(&p).expect("Decoding proof failed");
 
-            assert_eq!(&hex::encode(res), &current_hash);
+                let mut hasher = Keccak256::new();
+                hasher.update(&bytes);
+                let res = hasher.finalize();
 
-            let decoded_list = Rlp::new(&bytes);
-            assert!(decoded_list.is_list());
-
-            if i < depth_sp - 1 {
-                let nibble = key_nibbles[key_ptrs[i]];
-                current_hash = hex::encode(decoded_list.iter().collect::<Vec<_>>()[nibble].data().unwrap());
-            } else {
-                // verify value
-                let leaf_node = decoded_list.iter().collect::<Vec<_>>();
-                assert_eq!(leaf_node.len(), 2);
-                let value_decoded = Rlp::new(leaf_node[1].data().unwrap());
-                assert!(value_decoded.is_data());
-                let value = hex::encode(value_decoded.data().unwrap());
-
-                println!("value: {:?}", value);
-            }
-        }
-
-        let mut state_root: String;
-        let mut current_hash: String = "".to_string();
-        for (i, p) in sp.account_proof.iter().enumerate() {
-            let bytes = hex::decode(&p).expect("Decoding proof failed");
-
-            let mut hasher = Keccak256::new();
-            hasher.update(&bytes);
-            let res = hasher.finalize();
-
-            if i == 0 {
-                state_root = hex::encode(res);
-            } else {
                 assert_eq!(&hex::encode(res), &current_hash);
+
+                let decoded_list = Rlp::new(&bytes);
+                assert!(decoded_list.is_list());
+
+                if i < depth_sp - 1 {
+                    let nibble = key_nibbles[key_ptrs[i]];
+                    current_hash = hex::encode(
+                        decoded_list.iter().collect::<Vec<_>>()[nibble]
+                            .data()
+                            .unwrap(),
+                    );
+                } else {
+                    // verify value
+                    let leaf_node = decoded_list.iter().collect::<Vec<_>>();
+                    assert_eq!(leaf_node.len(), 2);
+                    let value_decoded = Rlp::new(leaf_node[1].data().unwrap());
+                    assert!(value_decoded.is_data());
+                    let value = hex::encode(value_decoded.data().unwrap());
+
+                    println!("value: {:?}", value);
+                }
             }
 
-            let decoded_list = Rlp::new(&bytes);
-            assert!(decoded_list.is_list());
+            let mut state_root: String = "".to_string();
+            let mut current_hash: String = "".to_string();
+            for (i, p) in sp.account_proof.iter().enumerate() {
+                let bytes = hex::decode(&p).expect("Decoding proof failed");
 
-            if i < depth_ap - 1 {
-                let nibble = account_key_nibbles[account_key_ptrs[i]];
-                current_hash = hex::encode(decoded_list.iter().collect::<Vec<_>>()[nibble].data().unwrap());
-            } else {
-                // verify value
-                let leaf_node = decoded_list.iter().collect::<Vec<_>>();
-                assert_eq!(leaf_node.len(), 2);
-                let value_decoded = Rlp::new(leaf_node[1].data().unwrap());
-                assert!(value_decoded.is_list());
+                let mut hasher = Keccak256::new();
+                hasher.update(&bytes);
+                let res = hasher.finalize();
 
-                assert_eq!(trie_proof.1, hex::encode(value_decoded.iter().collect::<Vec<_>>()[2].data().unwrap()));
+                if i == 0 {
+                    state_root = hex::encode(res);
+                } else {
+                    assert_eq!(&hex::encode(res), &current_hash);
+                }
+
+                let decoded_list = Rlp::new(&bytes);
+                assert!(decoded_list.is_list());
+
+                if i < depth_ap - 1 {
+                    let nibble = account_key_nibbles[account_key_ptrs[i]];
+                    current_hash = hex::encode(
+                        decoded_list.iter().collect::<Vec<_>>()[nibble]
+                            .data()
+                            .unwrap(),
+                    );
+                } else {
+                    // verify value
+                    let leaf_node = decoded_list.iter().collect::<Vec<_>>();
+                    assert_eq!(leaf_node.len(), 2);
+                    let value_decoded = Rlp::new(leaf_node[1].data().unwrap());
+                    assert!(value_decoded.is_list());
+
+                    assert_eq!(
+                        trie_proof.1,
+                        hex::encode(value_decoded.iter().collect::<Vec<_>>()[2].data().unwrap())
+                    );
+                }
             }
+            let rlp_enc_block_header = Rlp::new(sp.enc_block_header.as_slice());
+            let rlp_state_root = rlp_enc_block_header.at(3).unwrap();
+            let rlp_state_root = rlp_state_root
+                .data()
+                .unwrap()
+                .iter()
+                .map(|byte| format!("{:02x}", byte))
+                .collect::<String>();
+            assert_eq!(rlp_state_root, state_root);
+            let mut hasher = Keccak256::new();
+            hasher.update(sp.enc_block_header);
+            let calculated_block_hash = hasher.finalize();
+            assert_eq!(hex::encode(calculated_block_hash), sp.block_hash);
         }
 
         Ok(())

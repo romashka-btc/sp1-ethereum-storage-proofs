@@ -9,4 +9,6 @@ pub struct StorageProof {
     pub storage_proof: Vec<String>,
     pub key_ptrs: Vec<usize>,
     pub account_key_ptrs: Vec<usize>,
+    pub enc_block_header: Vec<u8>,
+    pub block_hash: String,
 }

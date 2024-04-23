@@ -1,8 +1,9 @@
+mod header;
 mod trie;
 mod utils;
 
+use crate::utils::{get_storage_proof, Block};
 use sp1_core::{SP1Prover, SP1Stdin, SP1Verifier};
-use crate::utils::{Block, get_storage_proof};
 
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
 
@@ -44,5 +45,4 @@ fn main() {
     println!("Verification time: {:?}", end.duration_since(start));
 
     println!("succesfully generated and verified proof for the program!");
-
 }
