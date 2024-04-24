@@ -1,0 +1,362 @@
+use anyhow::Result;
+use dotenv::dotenv;
+use rlp::{Encodable, RlpStream};
+use std::env;
+use std::process::Command;
+pub mod trie;
+
+use crate::{header::EvmBlockHeader, utils::{get_key_ptrs, odd_to_even_hex, Block}};
+use trie::StorageProof;
+use ethers::utils::keccak256;
+use serde_json::Value;
+use sha3::{Digest, Keccak256};
+
+extern crate hex;
+extern crate serde_json;
+
+
+fn encode_block_header(header: &EvmBlockHeader) -> Vec<u8> {
+    let mut stream = RlpStream::new();
+    header.rlp_append(&mut stream);
+    stream.out().to_vec()
+}
+
+pub fn get_block_enc_header(block_number: String) -> Result<(Vec<u8>, String)> {
+    dotenv().ok();
+    let data_string = format!(
+        r#"{{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["{}", false],"id":1}}"#,
+        block_number
+    );
+
+    let rpc = env::var("RPC")?;
+    let output = Command::new("curl")
+        .arg("-X")
+        .arg("POST")
+        .arg(rpc)
+        .arg("-d")
+        .arg(data_string)
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_str(&stdout)?;
+
+    let block_header = parsed["result"].clone();
+
+    let parent_hash = block_header["parentHash"].as_str().unwrap();
+    let parent_hash = &parent_hash[2..];
+    let state_root = block_header["stateRoot"].as_str().unwrap();
+    let state_root = &state_root[2..];
+    let transactions_root = block_header["transactionsRoot"].as_str().unwrap();
+    let transactions_root = &transactions_root[2..];
+    let receipts_root = block_header["receiptsRoot"].as_str().unwrap();
+    let receipts_root = &receipts_root[2..];
+    let logs_bloom = block_header["logsBloom"].as_str().unwrap();
+    let logs_bloom = &logs_bloom[2..];
+    let difficulty = block_header["difficulty"].as_str().unwrap();
+    let difficulty = &difficulty[2..];
+    let number = block_header["number"].as_str().unwrap();
+    let number = u64::from_str_radix(&number[2..], 16)?;
+    let gas_limit = block_header["gasLimit"].as_str().unwrap();
+    let gas_limit = u64::from_str_radix(&gas_limit[2..], 16)?;
+    let gas_used = block_header["gasUsed"].as_str().unwrap();
+    let gas_used = u64::from_str_radix(&gas_used[2..], 16)?;
+    let timestamp = block_header["timestamp"].as_str().unwrap();
+    let timestamp = u64::from_str_radix(&timestamp[2..], 16)?;
+    let extra_data = block_header["extraData"].as_str().unwrap();
+    let extra_data = &extra_data[2..];
+    let mix_hash = block_header["mixHash"].as_str().unwrap();
+    let mix_hash = &mix_hash[2..];
+    let nonce = block_header["nonce"].as_str().unwrap();
+    let nonce = &nonce[2..];
+    let miner = block_header["miner"].as_str().unwrap();
+    let miner = &miner[2..];
+    let base_fee_per_gas = block_header["baseFeePerGas"].as_str().unwrap();
+    let base_fee_per_gas = u64::from_str_radix(&base_fee_per_gas[2..], 16)?;
+    let withdrawals_root = block_header["withdrawalsRoot"].as_str().unwrap();
+    let withdrawals_root = &withdrawals_root[2..];
+    let blob_gas_used = block_header["blobGasUsed"].as_str().unwrap();
+    let blob_gas_used = u64::from_str_radix(&blob_gas_used[2..], 16)?;
+    let excess_blob_gas = block_header["excessBlobGas"].as_str().unwrap();
+    let excess_blob_gas = u64::from_str_radix(&excess_blob_gas[2..], 16)?;
+    let parent_beacon_block_root = block_header["parentBeaconBlockRoot"].as_str().unwrap();
+    let parent_beacon_block_root = &parent_beacon_block_root[2..];
+    let sha3uncles = block_header["sha3Uncles"].as_str().unwrap();
+    let sha3uncles = &sha3uncles[2..];
+
+    let evm_block = EvmBlockHeader {
+        parent_hash: parent_hash.to_string(),
+        state_root: state_root.to_string(),
+        transactions_root: transactions_root.to_string(),
+        receipts_root: receipts_root.to_string(),
+        logs_bloom: logs_bloom.to_string(),
+        difficulty: difficulty.to_string().parse::<u64>()?,
+        number: number,
+        gas_limit: gas_limit,
+        gas_used: gas_used,
+        timestamp: timestamp.to_string().parse::<u64>()?,
+        extra_data: extra_data.to_string(),
+        mix_hash: mix_hash.to_string(),
+        nonce: nonce.to_string(),
+        coinbase: miner.to_string(),
+        base_fee_per_gas: Some(base_fee_per_gas),
+        withdrawals_root: Some(withdrawals_root.to_string()),
+        blob_gas_used: Some(blob_gas_used),
+        excess_blob_gas: Some(excess_blob_gas),
+        parent_beacon_block_root: Some(parent_beacon_block_root.to_string()),
+        uncle_hash: sha3uncles.to_string(),
+    };
+
+    let encoded_block_header = encode_block_header(&evm_block);
+    let blockhash = hex::encode(keccak256(&encoded_block_header.clone()));
+    let expected_block_hash = block_header["hash"].as_str().unwrap()[2..].to_string();
+    assert_eq!(blockhash, expected_block_hash);
+    Ok((encoded_block_header, expected_block_hash))
+}
+
+pub fn get_storage_proof(
+    eth_address: &str,
+    storage_key: &str,
+    block_number: Block,
+) -> Result<(StorageProof, String)> {
+    dotenv().ok();
+    let bn = match block_number {
+        Block::Latest => "latest".to_string(),
+        Block::Number(n) => format!("0x{:x}", n),
+    };
+
+    let data_string = format!(
+        r#"{{"jsonrpc":"2.0","method":"eth_getProof","params":["{}",[{}],"{}"],"id":1}}"#,
+        eth_address,
+        format!("\"{}\"", storage_key),
+        bn
+    );
+    let rpc = env::var("RPC")?;
+    let output = Command::new("curl")
+        .arg("-X")
+        .arg("POST")
+        .arg(rpc)
+        .arg("-d")
+        .arg(data_string)
+        .output()?;
+
+    let (encoded_block_header, block_hash) = get_block_enc_header(bn.clone())?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_str(&stdout)?;
+
+    // Extract the storage proofs
+    let rpc_result=parsed["result"].clone();
+    let storage_proof_value =rpc_result["storageProof"].clone();
+    let storage_proof = storage_proof_value.as_array().unwrap()[0].clone();
+
+    let account_proof_vaue =rpc_result["accountProof"].clone();
+    let account_proof = account_proof_vaue.as_array().unwrap().clone();
+
+    let storage_hash =rpc_result["storageHash"].as_str().unwrap();
+    let storage_hash = &storage_hash[2..];
+
+    let key = storage_proof["key"].as_str().unwrap();
+    let key_bytes = hex::decode(odd_to_even_hex(&key[2..]))?;
+
+    let mut hasher = Keccak256::new();
+    hasher.update(&key_bytes);
+    let result = hasher.finalize();
+
+    let key_hash_bytes = result.to_vec();
+    let key_hash = hex::encode(key_hash_bytes);
+
+    let proof = storage_proof["proof"].as_array().unwrap();
+
+    let path_as_str = proof
+        .iter()
+        .map(|element| {
+            let element = element.as_str().unwrap();
+            element
+        })
+        .collect::<Vec<&str>>();
+    
+    let key_ptrs= get_key_ptrs(path_as_str.clone());
+
+    let address_bytes = hex::decode(odd_to_even_hex(&eth_address[2..]))?;
+    let mut hasher = Keccak256::new();
+    hasher.update(&address_bytes);
+    let result = hasher.finalize();
+
+    let address_hash_bytes = result.to_vec();
+    let address_hash = hex::encode(address_hash_bytes);
+
+    let account_path_as_str = account_proof
+        .iter()
+        .map(|element| {
+            let element = element.as_str().unwrap();
+            element
+        })
+        .collect::<Vec<&str>>();
+
+    let account_key_ptrs=get_key_ptrs(account_path_as_str.clone());
+
+    let proof = path_as_str
+        .iter()
+        .map(|x| x[2..].to_string())
+        .collect::<Vec<String>>();
+    let account_proof = account_path_as_str
+        .iter()
+        .map(|x| x[2..].to_string())
+        .collect::<Vec<String>>();
+
+    Ok((
+        StorageProof {
+            address_hash: address_hash.to_string(),
+            account_proof,
+            storage_key: key_hash.to_string(),
+            storage_proof: proof,
+            key_ptrs,
+            account_key_ptrs,
+            enc_block_header: encoded_block_header,
+            block_hash,
+        },
+        storage_hash.to_owned(),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::get_key_ptrs;
+
+    use super::{
+         get_storage_proof, Block
+    };
+    use anyhow::Result;
+    use hex;
+    use rlp::Rlp;
+    use sha3::{Digest, Keccak256};
+
+    #[test]
+    fn test_branch_split() -> Result<()> {
+        let path = [
+            "0xf90211a0d4685523e01e980b1b15d593ef92a29892200b5d17e90f73993b8e48e3ec9a95a003f511a02bb79c930a03fec8e45bc4e565c2f5c2b90f52cc80c767093709464fa0d41ebc458f8d7414b77b42f2eed10415b4fa909cee9307fb501cfe9c2fec279ea0b23482112d497f931e5666641e3c014aab48b3564305d13faafca89390af2d66a0a22495f1ac26ed51c08f0b205b4a22ed361631866f0223f2a7612d10f2da1aa8a0d23fc4baca54bf532faa572b55622e40f873652c2b009a6ab8e06f29938a2e59a0f1ad7ab771e65d865eb5d1ee1b77c9cb910948461295b5641106f9187f7038efa0a99aafc3ec45c268f5b1146ffae78242d15e52b06a54f3d5fe9a15bf509caa91a005c3571519c40841e1fcb6c952a5bf9b76ffd0d59f7dccfec5122f445e8624ada04626e7701acc68de8fd0445ee304972a14959da40f590f8fb20c654b9b1bea5ca0a68db0617f5b4c6cdb530ed14366c16cdba3fb9016703b744a24197223636fe5a0d9e294b08bf26233e15498659a650e2983d1c1059e7ef385c634656f0528f12ca03420511341a2c3fdc2070e74190e436d95c078a580bb932305fb2fbbe5ab5c9ca0a0fe187c8edcf62afb18bf29bea69b5488b26dcbe0f8204cd08b5662f052a00fa07dd0e8bb2f5b617b770995d61f4d99c567f18ad30fd3f9ad3082b88181f136a8a032c255b3531196dd5a31ebf1f404bbb6b90bb29653da9a832d2ccc9dcb21dd8b80",
+            "0xf90211a066aac6f5a978c9e665e5b96d883eb80d0e1f011f8f80c9b1bd8cc88f391e53d1a09f1e43a0ba666e17f4e8110975f41c8be4420648f031550a4451d155ea4111aaa0ce2228dd7cb87eb5aed542d89fbbf9eee90c1ba5aaf19ee29dce7b619d041674a0890e6c2cf4624136625643b3154674c397e0b08effd788fc27fcb18926ba5cb0a0dc890ad9cf16560b060cd50a93d4244849feb05f1689018320ca9574601c8d6ea0f924f6d0a26d2a61bb234723e7e55291e2b1f4a3241a5510e76d04a0491b9449a03a840866532e46f6dd33260dfe292c5bff75039959739f797ab93cba556f354da01b9c0e99aa504904e8f7416d71fa0d4998e7a304b757b91e8810193833c80d6ca0f7900ec7f53f2c541b1a78f11287c8f289dd8c421273fd608418cc499ccf0404a0ada8e0a618ebfa284edbc4af8d391a587a987f3d4678c028b2efc8e8ac4c999ba066ddcfb5915268482b9ee3cf1eea53901c0c330990874e4209ac768f9d5dd853a0d0711e509cf79f2bd6f1b90e705d684f5c8e3f9cc0ff1e02d4f8081b90ab1248a071c7ee1b33f6728766477a69ad8bd9f7ca0c4458c2e83c026d642d22ee86df64a009bf0423dfe0066180db1691dad70751399fa5edca86806c7c8dfd1c4622a9b4a08eba45bf77f2eaf1f10a33161839a6d4f51ac0064e23a536eff7b3b43e4c7ea4a0260e99a040e70b7a27ee00868f70fb2993b53a233da888352858aa4a7f781a3680",
+            "0xf90211a02f4ea6d48dfaf65990a0b2bbaf4896f2c52e53e97b87b4332c7c18f636b5dd13a028b1ec20afe5399857f2dc0a87ceabd2a48b89f4c5b490f9f9a8c5a7f97e8e5ca006adc06451c399170d1fc5f377890aafba61ccfbe6c53dffc8eaff55d9c4f3e1a04c1a4950b3ffe3afc91ec936e45e428b89d31e125fce160f003d629ac1a851bba074d3e762114776c8b7d8e931c2e1a85f8b0f07d2a13f58fcfdf7f7ecf09a5ddfa0fc73976a1116deee277d1e6b8b2b3a5f6d49e8b3919c7a4b139464263ec77bdea0d13c9b7c09da7b3ffb6efd23e1211c18a6cdf9838cbd3334eea36d44cc957c9aa08bc12fa996ba4ec4c0183a37ebef86539bca71eac2e2e13b8b5a3569c8505b0ba057dc2540a00930a63b5083c3c226aa83abbbb8ccff45e1d0815d081a162bfdfba000a42dee911b03cc329f00e6ec61a6b9977e866d6cb6c07a9231c5cbcdadd7f3a0b9be4ea998b0cc465e1089a94fc165c047dda678c18cf78896f632c2467f704da02e50c8f770a6e610f8b339d084bd2e5742314b9c5c412ffdcf053baed85c9ff0a015f78e31dc3a16f53d45671c02f16a8a3e3d4fa4d4ede524f0a4be786a81761fa089bccb4fc0828f1e3f81cd4f49c55786fe5af6b454ae380eee5c0c8af3c60a50a0661c68c9542fc76626f522b3eec3807d5616a90d212ae9cbf216017980e0f98fa0931ed5b398df16ad539db32202bc7e15f1029bfc71b2ccad33818e4894cda40980",
+            "0xf8d1808080a09bdb004d9b1e7f3e5f86fbdc9856f21f9dcb07a44c42f5de8eec178514d279df80a01f50e7ee4b847bceba7fb3f01fdafe949327b8aec724ff106bcb40749031a0098080a02b44776d99642c66e34eaccf146329beea4c6e96b3b6ddc9c32d51b784c4954180a00f8f2c713a079d09bfa73a8cdd1bdd3e4ff0b51fb17994af6b52edd77efa894b80a0bebb7a7c17a816c67b7084abfe93c5ee283e69f4303a35b185b98fe97cff0eaaa000bc3930843cc34573210bdb92bfecc32db5bbd2a713cb497f1a8d1b936e6dcc808080",
+            "0xe21ba089c052492200484eca92e22fb5818f7a40e4513f6bcf48c8e9c216cbd49cd453",
+            "0xf851a0bdf8d474c3279b73b2a86db9496f68daa1f418dff55a25c1a76031be0e603cf78080808080808080a0935117feec98c461b9860cc69df695460bfef3fc08e33e47c07ad409b2e7cc6d80808080808080",
+            "0xf59e2032d5a5fa3a5b6544566ee46a0f6b8fe8b1375ec878dc3be6580b0784959594b88f61e6fbda83fbfffabe364112137480398018",
+        ].to_vec();
+        let key_slices = get_key_ptrs(path);
+        println!("{:?}", key_slices);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_proof_verify() -> Result<()> {
+        let eth_address = "0xb47e3cd837dDF8e4c57f05d70ab865de6e193bbb";
+        let storage_key = "0xbbc70db1b6c7afd11e79c0fb0051300458f1a3acb8ee9789d9b6b26c61ad9bc7";
+
+        for i in 0..20 {
+            let block_number = Block::Number(19719703 - i);
+
+            let trie_proof = get_storage_proof(eth_address, storage_key, block_number)?;
+            let sp = trie_proof.0;
+            let mut current_hash = trie_proof.1.clone();
+
+            let key_ptrs = sp.key_ptrs;
+            let account_key_ptrs = sp.account_key_ptrs;
+
+            let depth_sp = sp.storage_proof.len();
+            let depth_ap = sp.account_proof.len();
+
+            let key_nibbles = sp
+                .storage_key
+                .chars()
+                .map(|x| x.to_digit(16).unwrap() as usize)
+                .collect::<Vec<_>>();
+            let account_key_nibbles = sp
+                .address_hash
+                .chars()
+                .map(|x| x.to_digit(16).unwrap() as usize)
+                .collect::<Vec<_>>();
+
+            for (i, p) in sp.storage_proof.iter().enumerate() {
+                let bytes = hex::decode(&p)?;
+
+                let mut hasher = Keccak256::new();
+                hasher.update(&bytes);
+                let res = hasher.finalize();
+
+                assert_eq!(&hex::encode(res), &current_hash);
+
+                let decoded_list = Rlp::new(&bytes);
+                assert!(decoded_list.is_list());
+
+                if i < depth_sp - 1 {
+                    let nibble = key_nibbles[key_ptrs[i]];
+                    current_hash = hex::encode(
+                        decoded_list.iter().collect::<Vec<_>>()[nibble]
+                            .data()
+                            .unwrap(),
+                    );
+                } else {
+                    // verify value
+                    let leaf_node = decoded_list.iter().collect::<Vec<_>>();
+                    assert_eq!(leaf_node.len(), 2);
+                    let value_decoded = Rlp::new(leaf_node[1].data().unwrap());
+                    assert!(value_decoded.is_data());
+                    //value
+                    let _ = hex::encode(value_decoded.data().unwrap());
+                }
+            }
+
+            let mut state_root: String = "".to_string();
+            let mut current_hash: String = "".to_string();
+            for (i, p) in sp.account_proof.iter().enumerate() {
+                let bytes = hex::decode(&p).expect("Decoding proof failed");
+
+                let mut hasher = Keccak256::new();
+                hasher.update(&bytes);
+                let res = hasher.finalize();
+
+                if i == 0 {
+                    state_root = hex::encode(res);
+                } else {
+                    assert_eq!(&hex::encode(res), &current_hash);
+                }
+
+                let decoded_list = Rlp::new(&bytes);
+                assert!(decoded_list.is_list());
+                if i < depth_ap - 1 {
+                    let nibble = account_key_nibbles[account_key_ptrs[i]];
+                    current_hash = hex::encode(
+                        decoded_list.iter().collect::<Vec<_>>()[nibble]
+                            .data()
+                            .unwrap(),
+                    );
+                } else {
+                    // verify value
+                    let leaf_node = decoded_list.iter().collect::<Vec<_>>();
+                    assert_eq!(leaf_node.len(), 2);
+                    let value_decoded = Rlp::new(leaf_node[1].data().unwrap());
+                    assert!(value_decoded.is_list());
+                    assert_eq!(
+                        trie_proof.1,
+                        hex::encode(value_decoded.iter().collect::<Vec<_>>()[2].data().unwrap())
+                    );
+                }
+            }
+            let rlp_enc_block_header = Rlp::new(sp.enc_block_header.as_slice());
+            let rlp_state_root = rlp_enc_block_header.at(3).unwrap();
+            let rlp_state_root = rlp_state_root
+                .data()
+                .unwrap()
+                .iter()
+                .map(|byte| format!("{:02x}", byte))
+                .collect::<String>();
+            assert_eq!(rlp_state_root, state_root);
+            let mut hasher = Keccak256::new();
+            hasher.update(sp.enc_block_header);
+            let calculated_block_hash = hasher.finalize();
+            assert_eq!(hex::encode(calculated_block_hash), sp.block_hash);
+        }
+
+        Ok(())
+    }
+}

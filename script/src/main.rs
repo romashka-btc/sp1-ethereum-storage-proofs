@@ -1,8 +1,7 @@
 mod header;
-mod trie;
+mod proof;
 mod utils;
-
-use crate::utils::{get_storage_proof, Block};
+use crate::{proof::get_storage_proof, utils::Block};
 use sp1_core::{SP1Prover, SP1Stdin, SP1Verifier};
 
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
