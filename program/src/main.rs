@@ -112,7 +112,6 @@ pub fn main() {
                 storage_root,
                 hex::encode(value_decoded.iter().collect::<Vec<_>>()[2].data().unwrap())
             );
-            sp1_zkvm::io::write(&state_root);
         }
     }
     let rlp_enc_block_header = Rlp::new(sp.enc_block_header.as_slice());
@@ -124,6 +123,8 @@ pub fn main() {
         .map(|byte| format!("{:02x}", byte))
         .collect::<String>();
     assert_eq!(rlp_state_root, state_root);
+    sp1_zkvm::io::write(&state_root);
+
     let mut hasher = Keccak256::new();
     hasher.update(sp.enc_block_header);
     let calculated_block_hash = hasher.finalize();
