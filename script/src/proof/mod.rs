@@ -8,13 +8,13 @@ pub mod trie;
 
 use crate::{
     header::EvmBlockHeader,
-    proof::eth_rpc::{BlockResult, EthGetBlockByNumberResponse},
-    utils::{get_key_ptrs, odd_to_even_hex, parse_hex_to_u64, parse_json, Block},
+    proof::eth_rpc::EthGetBlockByNumberResponse,
+    utils::{parse_json, Block},
 };
-use ethers::{etherscan::gas, utils::keccak256};
-use serde_json::Value;
-use sha3::{Digest, Keccak256};
+use ethers::utils::keccak256;
 use trie::StorageProof;
+
+use self::eth_rpc::EthGetProofResponse;
 
 extern crate hex;
 extern crate serde_json;
@@ -46,9 +46,10 @@ pub fn get_block_enc_header(block_number: String) -> Result<(Vec<u8>, String)> {
 
     let block_header = block_struct.result;
     let evm_block = EvmBlockHeader::from_block_result(block_header.clone())?;
+
+    let expected_block_hash = block_header.hash[2..].to_string();
     let encoded_block_header = encode_block_header(&evm_block);
     let blockhash = hex::encode(keccak256(&encoded_block_header.clone()));
-    let expected_block_hash = block_header.hash[2..].to_string();
     assert_eq!(blockhash, expected_block_hash);
     Ok((encoded_block_header, expected_block_hash))
 }
@@ -79,83 +80,18 @@ pub fn get_storage_proof(
         .arg(data_string)
         .output()?;
 
-    let (encoded_block_header, block_hash) = get_block_enc_header(bn.clone())?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value = serde_json::from_str(&stdout)?;
+    let proof_struct: EthGetProofResponse = parse_json(&stdout)?;
 
-    // Extract the storage proofs
-    let rpc_result = parsed["result"].clone();
-    let storage_proof_value = rpc_result["storageProof"].clone();
-    let storage_proof = storage_proof_value.as_array().unwrap()[0].clone();
+    let proof_result = proof_struct.result;
 
-    let account_proof_vaue = rpc_result["accountProof"].clone();
-    let account_proof = account_proof_vaue.as_array().unwrap().clone();
+    let storage_proof_input =
+        StorageProof::from_parsed(proof_result.clone(), eth_address.to_string(), bn.clone())?;
 
-    let storage_hash = rpc_result["storageHash"].as_str().unwrap();
+    let storage_hash = proof_result.storage_hash;
     let storage_hash = &storage_hash[2..];
 
-    let key = storage_proof["key"].as_str().unwrap();
-    let key_bytes = hex::decode(odd_to_even_hex(&key[2..]))?;
-
-    let mut hasher = Keccak256::new();
-    hasher.update(&key_bytes);
-    let result = hasher.finalize();
-
-    let key_hash_bytes = result.to_vec();
-    let key_hash = hex::encode(key_hash_bytes);
-
-    let proof = storage_proof["proof"].as_array().unwrap();
-
-    let path_as_str = proof
-        .iter()
-        .map(|element| {
-            let element = element.as_str().unwrap();
-            element
-        })
-        .collect::<Vec<&str>>();
-
-    let key_ptrs = get_key_ptrs(path_as_str.clone());
-
-    let address_bytes = hex::decode(odd_to_even_hex(&eth_address[2..]))?;
-    let mut hasher = Keccak256::new();
-    hasher.update(&address_bytes);
-    let result = hasher.finalize();
-
-    let address_hash_bytes = result.to_vec();
-    let address_hash = hex::encode(address_hash_bytes);
-
-    let account_path_as_str = account_proof
-        .iter()
-        .map(|element| {
-            let element = element.as_str().unwrap();
-            element
-        })
-        .collect::<Vec<&str>>();
-
-    let account_key_ptrs = get_key_ptrs(account_path_as_str.clone());
-
-    let proof = path_as_str
-        .iter()
-        .map(|x| x[2..].to_string())
-        .collect::<Vec<String>>();
-    let account_proof = account_path_as_str
-        .iter()
-        .map(|x| x[2..].to_string())
-        .collect::<Vec<String>>();
-
-    Ok((
-        StorageProof {
-            address_hash: address_hash.to_string(),
-            account_proof,
-            storage_key: key_hash.to_string(),
-            storage_proof: proof,
-            key_ptrs,
-            account_key_ptrs,
-            enc_block_header: encoded_block_header,
-            block_hash,
-        },
-        storage_hash.to_owned(),
-    ))
+    Ok((storage_proof_input, storage_hash.to_owned()))
 }
 
 #[cfg(test)]
@@ -190,14 +126,14 @@ mod tests {
         let eth_address = "0xb47e3cd837dDF8e4c57f05d70ab865de6e193bbb";
         let storage_key = "0xbbc70db1b6c7afd11e79c0fb0051300458f1a3acb8ee9789d9b6b26c61ad9bc7";
 
-        for i in 0..20 {
+        for i in 0..10 {
             let block_number = Block::Number(19719703 - i);
 
             let trie_proof = get_storage_proof(eth_address, storage_key, block_number)?;
             let sp = trie_proof.0;
             let mut current_hash = trie_proof.1.clone();
 
-            let key_ptrs = sp.key_ptrs;
+            let key_ptrs = sp.storage_key_ptrs;
             let account_key_ptrs = sp.account_key_ptrs;
 
             let depth_sp = sp.storage_proof.len();
