@@ -1,8 +1,8 @@
-mod trie;
+mod header;
+mod proof;
 mod utils;
-
+use crate::{proof::get_storage_proof, utils::Block};
 use sp1_core::{SP1Prover, SP1Stdin, SP1Verifier};
-use crate::utils::{Block, get_storage_proof};
 
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
 
@@ -11,7 +11,10 @@ fn main() {
     let storage_key = "0xbbc70db1b6c7afd11e79c0fb0051300458f1a3acb8ee9789d9b6b26c61ad9bc7";
     let block_number = Block::Latest;
 
-    let trie_proof = get_storage_proof(eth_address, storage_key, block_number);
+    let trie_proof = match get_storage_proof(eth_address, storage_key, block_number) {
+        Ok(proof) => proof,
+        Err(e) => panic!("Error getting storage proof: {}", e),
+    };
 
     let mut stdin = SP1Stdin::new();
     let start = std::time::Instant::now();
@@ -44,5 +47,4 @@ fn main() {
     println!("Verification time: {:?}", end.duration_since(start));
 
     println!("succesfully generated and verified proof for the program!");
-
 }
