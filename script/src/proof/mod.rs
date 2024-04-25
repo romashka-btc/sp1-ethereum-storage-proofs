@@ -11,7 +11,7 @@ use crate::{
     proof::eth_rpc::EthGetBlockByNumberResponse,
     utils::{parse_json, Block},
 };
-use ethers::utils::keccak256;
+use sha3::{Digest, Keccak256};
 use trie::StorageProof;
 
 use self::eth_rpc::EthGetProofResponse;
@@ -49,7 +49,7 @@ pub fn get_block_enc_header(block_number: String) -> Result<(Vec<u8>, String)> {
 
     let expected_block_hash = block_header.hash[2..].to_string();
     let encoded_block_header = encode_block_header(&evm_block);
-    let blockhash = hex::encode(keccak256(&encoded_block_header.clone()));
+    let blockhash = hex::encode(Keccak256::digest(&encoded_block_header.clone()));
     assert_eq!(blockhash, expected_block_hash);
     Ok((encoded_block_header, expected_block_hash))
 }
