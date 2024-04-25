@@ -3,17 +3,21 @@ use dotenv::dotenv;
 use rlp::{Encodable, RlpStream};
 use std::env;
 use std::process::Command;
+pub mod eth_rpc;
 pub mod trie;
 
-use crate::{header::EvmBlockHeader, utils::{get_key_ptrs, odd_to_even_hex, Block}};
-use trie::StorageProof;
-use ethers::utils::keccak256;
+use crate::{
+    header::EvmBlockHeader,
+    proof::eth_rpc::{BlockResult, EthGetBlockByNumberResponse},
+    utils::{get_key_ptrs, odd_to_even_hex, parse_hex_to_u64, parse_json, Block},
+};
+use ethers::{etherscan::gas, utils::keccak256};
 use serde_json::Value;
 use sha3::{Digest, Keccak256};
+use trie::StorageProof;
 
 extern crate hex;
 extern crate serde_json;
-
 
 fn encode_block_header(header: &EvmBlockHeader) -> Vec<u8> {
     let mut stream = RlpStream::new();
@@ -38,77 +42,13 @@ pub fn get_block_enc_header(block_number: String) -> Result<(Vec<u8>, String)> {
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value = serde_json::from_str(&stdout)?;
+    let block_struct: EthGetBlockByNumberResponse = parse_json(&stdout)?;
 
-    let block_header = parsed["result"].clone();
-
-    let parent_hash = block_header["parentHash"].as_str().unwrap();
-    let parent_hash = &parent_hash[2..];
-    let state_root = block_header["stateRoot"].as_str().unwrap();
-    let state_root = &state_root[2..];
-    let transactions_root = block_header["transactionsRoot"].as_str().unwrap();
-    let transactions_root = &transactions_root[2..];
-    let receipts_root = block_header["receiptsRoot"].as_str().unwrap();
-    let receipts_root = &receipts_root[2..];
-    let logs_bloom = block_header["logsBloom"].as_str().unwrap();
-    let logs_bloom = &logs_bloom[2..];
-    let difficulty = block_header["difficulty"].as_str().unwrap();
-    let difficulty = &difficulty[2..];
-    let number = block_header["number"].as_str().unwrap();
-    let number = u64::from_str_radix(&number[2..], 16)?;
-    let gas_limit = block_header["gasLimit"].as_str().unwrap();
-    let gas_limit = u64::from_str_radix(&gas_limit[2..], 16)?;
-    let gas_used = block_header["gasUsed"].as_str().unwrap();
-    let gas_used = u64::from_str_radix(&gas_used[2..], 16)?;
-    let timestamp = block_header["timestamp"].as_str().unwrap();
-    let timestamp = u64::from_str_radix(&timestamp[2..], 16)?;
-    let extra_data = block_header["extraData"].as_str().unwrap();
-    let extra_data = &extra_data[2..];
-    let mix_hash = block_header["mixHash"].as_str().unwrap();
-    let mix_hash = &mix_hash[2..];
-    let nonce = block_header["nonce"].as_str().unwrap();
-    let nonce = &nonce[2..];
-    let miner = block_header["miner"].as_str().unwrap();
-    let miner = &miner[2..];
-    let base_fee_per_gas = block_header["baseFeePerGas"].as_str().unwrap();
-    let base_fee_per_gas = u64::from_str_radix(&base_fee_per_gas[2..], 16)?;
-    let withdrawals_root = block_header["withdrawalsRoot"].as_str().unwrap();
-    let withdrawals_root = &withdrawals_root[2..];
-    let blob_gas_used = block_header["blobGasUsed"].as_str().unwrap();
-    let blob_gas_used = u64::from_str_radix(&blob_gas_used[2..], 16)?;
-    let excess_blob_gas = block_header["excessBlobGas"].as_str().unwrap();
-    let excess_blob_gas = u64::from_str_radix(&excess_blob_gas[2..], 16)?;
-    let parent_beacon_block_root = block_header["parentBeaconBlockRoot"].as_str().unwrap();
-    let parent_beacon_block_root = &parent_beacon_block_root[2..];
-    let sha3uncles = block_header["sha3Uncles"].as_str().unwrap();
-    let sha3uncles = &sha3uncles[2..];
-
-    let evm_block = EvmBlockHeader {
-        parent_hash: parent_hash.to_string(),
-        state_root: state_root.to_string(),
-        transactions_root: transactions_root.to_string(),
-        receipts_root: receipts_root.to_string(),
-        logs_bloom: logs_bloom.to_string(),
-        difficulty: difficulty.to_string().parse::<u64>()?,
-        number: number,
-        gas_limit: gas_limit,
-        gas_used: gas_used,
-        timestamp: timestamp.to_string().parse::<u64>()?,
-        extra_data: extra_data.to_string(),
-        mix_hash: mix_hash.to_string(),
-        nonce: nonce.to_string(),
-        coinbase: miner.to_string(),
-        base_fee_per_gas: Some(base_fee_per_gas),
-        withdrawals_root: Some(withdrawals_root.to_string()),
-        blob_gas_used: Some(blob_gas_used),
-        excess_blob_gas: Some(excess_blob_gas),
-        parent_beacon_block_root: Some(parent_beacon_block_root.to_string()),
-        uncle_hash: sha3uncles.to_string(),
-    };
-
+    let block_header = block_struct.result;
+    let evm_block = EvmBlockHeader::from_block_result(block_header.clone())?;
     let encoded_block_header = encode_block_header(&evm_block);
     let blockhash = hex::encode(keccak256(&encoded_block_header.clone()));
-    let expected_block_hash = block_header["hash"].as_str().unwrap()[2..].to_string();
+    let expected_block_hash = block_header.hash[2..].to_string();
     assert_eq!(blockhash, expected_block_hash);
     Ok((encoded_block_header, expected_block_hash))
 }
@@ -144,14 +84,14 @@ pub fn get_storage_proof(
     let parsed: Value = serde_json::from_str(&stdout)?;
 
     // Extract the storage proofs
-    let rpc_result=parsed["result"].clone();
-    let storage_proof_value =rpc_result["storageProof"].clone();
+    let rpc_result = parsed["result"].clone();
+    let storage_proof_value = rpc_result["storageProof"].clone();
     let storage_proof = storage_proof_value.as_array().unwrap()[0].clone();
 
-    let account_proof_vaue =rpc_result["accountProof"].clone();
+    let account_proof_vaue = rpc_result["accountProof"].clone();
     let account_proof = account_proof_vaue.as_array().unwrap().clone();
 
-    let storage_hash =rpc_result["storageHash"].as_str().unwrap();
+    let storage_hash = rpc_result["storageHash"].as_str().unwrap();
     let storage_hash = &storage_hash[2..];
 
     let key = storage_proof["key"].as_str().unwrap();
@@ -173,8 +113,8 @@ pub fn get_storage_proof(
             element
         })
         .collect::<Vec<&str>>();
-    
-    let key_ptrs= get_key_ptrs(path_as_str.clone());
+
+    let key_ptrs = get_key_ptrs(path_as_str.clone());
 
     let address_bytes = hex::decode(odd_to_even_hex(&eth_address[2..]))?;
     let mut hasher = Keccak256::new();
@@ -192,7 +132,7 @@ pub fn get_storage_proof(
         })
         .collect::<Vec<&str>>();
 
-    let account_key_ptrs=get_key_ptrs(account_path_as_str.clone());
+    let account_key_ptrs = get_key_ptrs(account_path_as_str.clone());
 
     let proof = path_as_str
         .iter()
@@ -222,9 +162,7 @@ pub fn get_storage_proof(
 mod tests {
     use crate::utils::get_key_ptrs;
 
-    use super::{
-         get_storage_proof, Block
-    };
+    use super::{get_storage_proof, Block};
     use anyhow::Result;
     use hex;
     use rlp::Rlp;

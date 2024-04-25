@@ -1,3 +1,6 @@
+use crate::proof::eth_rpc::BlockResult;
+use crate::utils::parse_hex_to_u64;
+use anyhow::{Error, Result};
 use rlp::{Encodable, RlpStream};
 
 #[derive(Debug, Clone)]
@@ -72,6 +75,33 @@ impl Encodable for EvmBlockHeader {
         if let Some(ref parent_beacon_block_root) = self.parent_beacon_block_root {
             s.append(&safe_hex_decode(parent_beacon_block_root));
         }
+    }
+}
+
+impl EvmBlockHeader {
+    pub fn from_block_result(result: BlockResult) -> Result<Self, Error> {
+        Ok(EvmBlockHeader {
+            parent_hash: result.parent_hash[2..].to_string(),
+            uncle_hash: result.sha3_uncles[2..].to_string(),
+            coinbase: result.miner[2..].to_string(),
+            state_root: result.state_root[2..].to_string(),
+            transactions_root: result.transactions_root[2..].to_string(),
+            receipts_root: result.receipts_root[2..].to_string(),
+            logs_bloom: result.logs_bloom[2..].to_string(),
+            difficulty: parse_hex_to_u64(&result.difficulty)?,
+            number: parse_hex_to_u64(&result.number)?,
+            gas_limit: parse_hex_to_u64(&result.gas_limit)?,
+            gas_used: parse_hex_to_u64(&result.gas_used)?,
+            timestamp: parse_hex_to_u64(&result.timestamp)?,
+            extra_data: result.extra_data[2..].to_string(),
+            mix_hash: result.mix_hash[2..].to_string(),
+            nonce: result.nonce[2..].to_string(),
+            base_fee_per_gas: Some(parse_hex_to_u64(&result.base_fee_per_gas)?),
+            withdrawals_root: Some(result.withdrawals_root[2..].to_string()),
+            blob_gas_used: Some(parse_hex_to_u64(&result.blob_gas_used)?),
+            excess_blob_gas: Some(parse_hex_to_u64(&result.blob_gas_used)?),
+            parent_beacon_block_root: Some(result.parent_beacon_block_root[2..].to_string()),
+        })
     }
 }
 
