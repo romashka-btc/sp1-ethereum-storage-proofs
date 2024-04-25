@@ -1,4 +1,5 @@
 use rlp::Rlp;
+use serde_json::Result as SerdeResult;
 
 #[allow(dead_code)]
 pub enum Block {
@@ -43,4 +44,12 @@ pub fn get_key_ptrs(proof: Vec<&str>) -> Vec<usize> {
         }
     }
     result
+}
+
+pub fn parse_json<T: serde::de::DeserializeOwned>(json_str: &str) -> SerdeResult<T> {
+    serde_json::from_str::<T>(json_str)
+}
+
+pub fn parse_hex_to_u64(hex: &str) -> Result<u64, std::num::ParseIntError> {
+    u64::from_str_radix(&hex[2..], 16)
 }
