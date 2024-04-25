@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct EthGetProofResponse {
     pub jsonrpc: String,
     pub id: u32,
     pub result: ProofResult,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ProofResult {
     pub address: String,
@@ -19,7 +19,7 @@ pub struct ProofResult {
     pub storage_proof: Vec<StorageProof>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StorageProof {
     pub key: String,
     pub value: String,

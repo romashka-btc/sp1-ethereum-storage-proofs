@@ -99,7 +99,7 @@ impl EvmBlockHeader {
             base_fee_per_gas: Some(parse_hex_to_u64(&result.base_fee_per_gas)?),
             withdrawals_root: Some(result.withdrawals_root[2..].to_string()),
             blob_gas_used: Some(parse_hex_to_u64(&result.blob_gas_used)?),
-            excess_blob_gas: Some(parse_hex_to_u64(&result.blob_gas_used)?),
+            excess_blob_gas: Some(parse_hex_to_u64(&result.excess_blob_gas)?),
             parent_beacon_block_root: Some(result.parent_beacon_block_root[2..].to_string()),
         })
     }
