@@ -12,7 +12,7 @@ This project demonstrates how to generate a zero-knowledge (zk) proof of a stora
 1. Clone the Repository
     - Start by cloning this repository to your local machine.
   ```bash
-    git clone https://github.com/aerius-labs/sp1-ethereum-storage-proofs.git
+    git clone https://github.com/aerius-labs/sp1-ethereum-storage-proofs
   ```
 
 2. Switch to Rust Nightly
